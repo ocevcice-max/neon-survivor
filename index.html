@@ -1,0 +1,708 @@
+<!DOCTYPE html>
+<html lang="hr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>NEON SURVIVOR 4.1 – HARD MODE</title>
+<style>
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  background: #050510;
+  color: white;
+  font-family: Arial, sans-serif;
+  overflow: hidden;
+}
+
+#game {
+  width: 100vw;
+  height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+}
+
+canvas {
+  background: #09091c;
+  border: 2px solid #00eaff;
+  box-shadow: 0 0 25px #00eaff55;
+  max-width: 100%;
+  max-height: 100%;
+}
+
+#hud {
+  position: absolute;
+  top: 15px;
+  left: 15px;
+  z-index: 5;
+  font-size: 17px;
+  line-height: 1.8;
+  text-shadow: 0 0 8px #00eaff;
+  pointer-events: none;
+}
+
+#bossBar {
+  position: absolute;
+  top: 15px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: min(400px, 65vw);
+  height: 18px;
+  border: 2px solid #ff1744;
+  background: #25000b;
+  display: none;
+}
+
+#bossHealth {
+  width: 100%;
+  height: 100%;
+  background: #ff1744;
+  transition: width 0.15s;
+}
+
+#overlay {
+  position: absolute;
+  inset: 0;
+  background: #050510ee;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 10;
+}
+
+.panel {
+  width: min(420px, 90vw);
+  padding: 30px;
+  text-align: center;
+  border: 2px solid #00eaff;
+  border-radius: 15px;
+  background: #10102b;
+  box-shadow: 0 0 30px #00eaff55;
+}
+
+h1 {
+  color: #00eaff;
+  font-size: 30px;
+  margin-bottom: 12px;
+  text-shadow: 0 0 15px #00eaff;
+}
+
+button, input {
+  width: 100%;
+  padding: 12px;
+  margin-top: 12px;
+  border-radius: 7px;
+  border: 1px solid #00eaff;
+  font-size: 16px;
+}
+
+input {
+  background: #080818;
+  color: white;
+}
+
+button {
+  background: #00d9ff;
+  color: #050510;
+  font-weight: bold;
+  cursor: pointer;
+}
+
+button:hover {
+  background: white;
+  box-shadow: 0 0 15px #00eaff;
+}
+
+#message {
+  color: #ff5577;
+  margin-top: 10px;
+}
+
+#minimap {
+  position: absolute;
+  right: 15px;
+  bottom: 15px;
+  width: 150px;
+  height: 95px;
+  border: 1px solid #00eaff;
+  background: #10102b;
+}
+
+@media (max-width: 600px) {
+  #hud { font-size: 13px; }
+  #minimap { width: 100px; height: 65px; }
+}
+</style>
+</head>
+<body>
+
+<div id="game">
+  <canvas id="canvas" width="960" height="540"></canvas>
+
+  <div id="hud">
+    <div>❤️ Život: <span id="health">1</span></div>
+    <div>🪙 Novčići: <span id="coins">0</span></div>
+    <div>⭐ Rezultat: <span id="score">0</span></div>
+    <div>⏱ Vrijeme: <span id="time">0</span>s</div>
+  </div>
+
+  <div id="bossBar">
+    <div id="bossHealth"></div>
+  </div>
+
+  <canvas id="minimap" width="300" height="190"></canvas>
+
+  <div id="overlay">
+    <div class="panel" id="loginPanel">
+      <h1>NEON SURVIVOR</h1>
+      <p>4.1 – HARD MODE</p>
+      <input id="username" placeholder="Korisničko ime" maxlength="16">
+      <input id="password" type="password" placeholder="Lozinka">
+      <button id="loginButton">PRIJAVA</button>
+      <button id="registerButton">REGISTRACIJA</button>
+      <div id="message"></div>
+    </div>
+  </div>
+</div>
+<script>
+const canvas = document.getElementById("canvas");
+const ctx = canvas.getContext("2d");
+const mini = document.getElementById("minimap");
+const mctx = mini.getContext("2d");
+
+const WORLD_W = 2400;
+const WORLD_H = 1500;
+
+let player = {
+  x: WORLD_W / 2,
+  y: WORLD_H / 2,
+  speed: 230,
+  radius: 14,
+  hp: 1,
+  dash: 0
+};
+
+let enemies = [];
+let bullets = [];
+let particles = [];
+let coins = [];
+let keys = {};
+let score = 0;
+let money = 0;
+let elapsed = 0;
+let lastShot = 0;
+let lastSpawn = 0;
+let boss = null;
+let running = false;
+let camera = { x: 0, y: 0 };
+let lastFrame = 0;
+let currentUser = "";
+
+const $ = id => document.getElementById(id);
+
+function saveData() {
+  const data = JSON.parse(localStorage.getItem("neonData") || "{}");
+  data[currentUser] = data[currentUser] || {};
+  data[currentUser].score = Math.max(data[currentUser].score || 0, score);
+  data[currentUser].coins = money;
+  localStorage.setItem("neonData", JSON.stringify(data));
+}
+
+function register() {
+  const user = $("username").value.trim();
+  const pass = $("password").value;
+
+  if (user.length < 3 || pass.length < 3) {
+    $("message").textContent = "Unesi ime i lozinku od barem 3 znaka.";
+    return;
+  }
+
+  const data = JSON.parse(localStorage.getItem("neonAccounts") || "{}");
+
+  if (data[user]) {
+    $("message").textContent = "Korisničko ime već postoji.";
+    return;
+  }
+
+  data[user] = pass;
+  localStorage.setItem("neonAccounts", JSON.stringify(data));
+  currentUser = user;
+  $("message").textContent = "Račun je napravljen!";
+  startGame();
+}
+
+function login() {
+  const user = $("username").value.trim();
+  const pass = $("password").value;
+  const data = JSON.parse(localStorage.getItem("neonAccounts") || "{}");
+
+  if (!data[user] || data[user] !== pass) {
+    $("message").textContent = "Pogrešno ime ili lozinka.";
+    return;
+  }
+
+  currentUser = user;
+  startGame();
+}
+
+$("registerButton").addEventListener("click", register);
+$("loginButton").addEventListener("click", login);
+
+window.addEventListener("keydown", e => {
+  keys[e.key.toLowerCase()] = true;
+
+  if (e.code === "Space") {
+    e.preventDefault();
+    if (running && player.dash <= 0) player.dash = 0.2;
+  }
+});
+
+window.addEventListener("keyup", e => {
+  keys[e.key.toLowerCase()] = false;
+});
+
+function startGame() {
+  player.x = WORLD_W / 2;
+  player.y = WORLD_H / 2;
+  player.hp = 1;
+  player.dash = 0;
+
+  enemies = [];
+  bullets = [];
+  particles = [];
+  coins = [];
+  boss = null;
+
+  score = 0;
+  money = 0;
+  elapsed = 0;
+  lastShot = 0;
+  lastSpawn = 0;
+  lastFrame = performance.now();
+
+  $("overlay").style.display = "none";
+  $("bossBar").style.display = "none";
+
+  running = true;
+  requestAnimationFrame(gameLoop);
+}
+
+function spawnEnemy() {
+  const angle = Math.random() * Math.PI * 2;
+  const distance = 520;
+
+  const roll = Math.random();
+  let type = "normal";
+  let hp = 5;
+  let speed = 75;
+
+  if (roll < 0.2) {
+    type = "fast";
+    hp = 3;
+    speed = 145;
+  } else if (roll < 0.4) {
+    type = "tank";
+    hp = 8;
+    speed = 48;
+  }
+
+  enemies.push({
+    x: player.x + Math.cos(angle) * distance,
+    y: player.y + Math.sin(angle) * distance,
+    hp,
+    maxHp: hp,
+    speed,
+    type,
+    radius: type === "tank" ? 19 : 13,
+    flash: 0
+  });
+}
+
+function spawnBoss() {
+  const angle = Math.random() * Math.PI * 2;
+
+  boss = {
+    x: player.x + Math.cos(angle) * 550,
+    y: player.y + Math.sin(angle) * 550,
+    hp: 240,
+    maxHp: 240,
+    speed: 65,
+    radius: 35,
+    flash: 0
+  };
+
+  $("bossBar").style.display = "block";
+}
+
+function shoot() {
+  if (enemies.length === 0 && !boss) return;
+
+  let target = boss;
+  let nearest = boss
+    ? Math.hypot(boss.x - player.x, boss.y - player.y)
+    : Infinity;
+
+  for (const enemy of enemies) {
+    const d = Math.hypot(enemy.x - player.x, enemy.y - player.y);
+    if (d < nearest) {
+      nearest = d;
+      target = enemy;
+    }
+  }
+
+  if (!target) return;
+
+  const angle = Math.atan2(target.y - player.y, target.x - player.x);
+
+  bullets.push({
+    x: player.x,
+    y: player.y,
+    vx: Math.cos(angle) * 430,
+    vy: Math.sin(angle) * 430,
+    damage: 1,
+    life: 2
+  });
+}
+  function createParticles(x, y, amount = 8) {
+  for (let i = 0; i < amount; i++) {
+    const angle = Math.random() * Math.PI * 2;
+    const speed = 40 + Math.random() * 150;
+
+    particles.push({
+      x, y,
+      vx: Math.cos(angle) * speed,
+      vy: Math.sin(angle) * speed,
+      life: 0.5 + Math.random() * 0.5,
+      maxLife: 1
+    });
+  }
+}
+
+function dropCoin(x, y) {
+  coins.push({
+    x, y,
+    radius: 7,
+    life: 12
+  });
+}
+
+function update(dt) {
+  elapsed += dt;
+
+  let dx = 0;
+  let dy = 0;
+
+  if (keys["w"] || keys["arrowup"]) dy--;
+  if (keys["s"] || keys["arrowdown"]) dy++;
+  if (keys["a"] || keys["arrowleft"]) dx--;
+  if (keys["d"] || keys["arrowright"]) dx++;
+
+  const length = Math.hypot(dx, dy) || 1;
+  const dashMultiplier = player.dash > 0 ? 3 : 1;
+
+  player.x += (dx / length) * player.speed * dashMultiplier * dt;
+  player.y += (dy / length) * player.speed * dashMultiplier * dt;
+
+  player.x = Math.max(player.radius, Math.min(WORLD_W - player.radius, player.x));
+  player.y = Math.max(player.radius, Math.min(WORLD_H - player.radius, player.y));
+
+  if (player.dash > 0) player.dash -= dt;
+
+  if (elapsed - lastSpawn > 1.1) {
+    spawnEnemy();
+    lastSpawn = elapsed;
+  }
+
+  if (elapsed >= 30 && Math.floor(elapsed / 30) > Math.floor((elapsed - dt) / 30)) {
+    if (!boss) spawnBoss();
+  }
+
+  if (elapsed - lastShot > 0.48) {
+    shoot();
+    lastShot = elapsed;
+  }
+
+  for (const enemy of enemies) {
+    const angle = Math.atan2(player.y - enemy.y, player.x - enemy.x);
+    enemy.x += Math.cos(angle) * enemy.speed * dt;
+    enemy.y += Math.sin(angle) * enemy.speed * dt;
+    enemy.flash = Math.max(0, enemy.flash - dt);
+
+    if (Math.hypot(enemy.x - player.x, enemy.y - player.y) < enemy.radius + player.radius) {
+      gameOver();
+      return;
+    }
+  }
+
+  if (boss) {
+    const angle = Math.atan2(player.y - boss.y, player.x - boss.x);
+    boss.x += Math.cos(angle) * boss.speed * dt;
+    boss.y += Math.sin(angle) * boss.speed * dt;
+    boss.flash = Math.max(0, boss.flash - dt);
+
+    if (Math.hypot(boss.x - player.x, boss.y - player.y) < boss.radius + player.radius) {
+      gameOver();
+      return;
+    }
+  }
+
+  for (const bullet of bullets) {
+    bullet.x += bullet.vx * dt;
+    bullet.y += bullet.vy * dt;
+    bullet.life -= dt;
+
+    for (const enemy of enemies) {
+      if (enemy.hp > 0 &&
+          Math.hypot(bullet.x - enemy.x, bullet.y - enemy.y) < enemy.radius + 5) {
+        enemy.hp -= bullet.damage;
+        enemy.flash = 0.12;
+        bullet.life = 0;
+        createParticles(bullet.x, bullet.y, 3);
+
+        if (enemy.hp <= 0) {
+          score += enemy.type === "tank" ? 30 : enemy.type === "fast" ? 20 : 10;
+          dropCoin(enemy.x, enemy.y);
+          createParticles(enemy.x, enemy.y, 12);
+        }
+        break;
+      }
+    }
+
+    if (boss && bullet.life > 0 &&
+        Math.hypot(bullet.x - boss.x, bullet.y - boss.y) < boss.radius + 5) {
+      boss.hp -= 2;
+      boss.flash = 0.12;
+      bullet.life = 0;
+      createParticles(bullet.x, bullet.y, 4);
+
+      if (boss.hp <= 0) {
+        score += 500;
+        money += 50;
+        createParticles(boss.x, boss.y, 35);
+        boss = null;
+        $("bossBar").style.display = "none";
+      }
+    }
+  }
+
+  bullets = bullets.filter(b => b.life > 0);
+  enemies = enemies.filter(e => e.hp > 0);
+
+  for (const p of particles) {
+    p.x += p.vx * dt;
+    p.y += p.vy * dt;
+    p.life -= dt;
+  }
+  particles = particles.filter(p => p.life > 0);
+
+  for (const coin of coins) {
+    coin.life -= dt;
+    if (Math.hypot(coin.x - player.x, coin.y - player.y) < 28) {
+      money++;
+      coin.life = 0;
+    }
+  }
+  coins = coins.filter(c => c.life > 0);
+
+  camera.x = Math.max(0, Math.min(WORLD_W - canvas.width, player.x - canvas.width / 2));
+  camera.y = Math.max(0, Math.min(WORLD_H - canvas.height, player.y - canvas.height / 2));
+
+  $("health").textContent = player.hp;
+  $("coins").textContent = money;
+  $("score").textContent = score;
+  $("time").textContent = Math.floor(elapsed);
+
+  if (boss) {
+    $("bossHealth").style.width = Math.max(0, boss.hp / boss.maxHp * 100) + "%";
+  }
+}
+  function draw() {
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  ctx.save();
+  ctx.translate(-camera.x, -camera.y);
+
+  ctx.fillStyle = "#09091c";
+  ctx.fillRect(camera.x, camera.y, canvas.width, canvas.height);
+
+  ctx.strokeStyle = "#171738";
+  ctx.lineWidth = 1;
+
+  for (let x = 0; x <= WORLD_W; x += 60) {
+    ctx.beginPath();
+    ctx.moveTo(x, camera.y);
+    ctx.lineTo(x, camera.y + canvas.height);
+    ctx.stroke();
+  }
+
+  for (let y = 0; y <= WORLD_H; y += 60) {
+    ctx.beginPath();
+    ctx.moveTo(camera.x, y);
+    ctx.lineTo(camera.x + canvas.width, y);
+    ctx.stroke();
+  }
+
+  for (const coin of coins) {
+    ctx.fillStyle = "#ffd700";
+    ctx.shadowColor = "#ffd700";
+    ctx.shadowBlur = 12;
+    ctx.beginPath();
+    ctx.arc(coin.x, coin.y, coin.radius, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.shadowBlur = 0;
+  }
+
+  for (const bullet of bullets) {
+    ctx.fillStyle = "#00eaff";
+    ctx.shadowColor = "#00eaff";
+    ctx.shadowBlur = 12;
+    ctx.beginPath();
+    ctx.arc(bullet.x, bullet.y, 5, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.shadowBlur = 0;
+  }
+
+  for (const enemy of enemies) {
+    ctx.fillStyle = enemy.flash > 0 ? "#ffffff" :
+      enemy.type === "fast" ? "#ffea00" :
+      enemy.type === "tank" ? "#a000ff" : "#ff3155";
+
+    ctx.shadowColor = ctx.fillStyle;
+    ctx.shadowBlur = 15;
+    ctx.beginPath();
+    ctx.arc(enemy.x, enemy.y, enemy.radius, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.shadowBlur = 0;
+
+    ctx.fillStyle = "white";
+    ctx.font = "12px Arial";
+    ctx.textAlign = "center";
+    ctx.fillText(enemy.hp, enemy.x, enemy.y - enemy.radius - 7);
+  }
+
+  if (boss) {
+    ctx.fillStyle = boss.flash > 0 ? "white" : "#ff1744";
+    ctx.shadowColor = "#ff1744";
+    ctx.shadowBlur = 25;
+    ctx.beginPath();
+    ctx.arc(boss.x, boss.y, boss.radius, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.shadowBlur = 0;
+
+    ctx.fillStyle = "white";
+    ctx.font = "bold 16px Arial";
+    ctx.textAlign = "center";
+    ctx.fillText("BOSS", boss.x, boss.y - boss.radius - 12);
+  }
+
+  for (const p of particles) {
+    ctx.globalAlpha = Math.max(0, p.life);
+    ctx.fillStyle = "#00eaff";
+    ctx.fillRect(p.x, p.y, 4, 4);
+  }
+  ctx.globalAlpha = 1;
+
+  ctx.fillStyle = "#00eaff";
+  ctx.shadowColor = "#00eaff";
+  ctx.shadowBlur = 18;
+  ctx.beginPath();
+  ctx.arc(player.x, player.y, player.radius, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.shadowBlur = 0;
+
+  ctx.restore();
+
+  drawMinimap();
+}
+
+function drawMinimap() {
+  mctx.clearRect(0, 0, mini.width, mini.height);
+  mctx.fillStyle = "#080818";
+  mctx.fillRect(0, 0, mini.width, mini.height);
+
+  const sx = mini.width / WORLD_W;
+  const sy = mini.height / WORLD_H;
+
+  mctx.fillStyle = "#ff3155";
+  for (const enemy of enemies) {
+    mctx.fillRect(enemy.x * sx - 2, enemy.y * sy - 2, 4, 4);
+  }
+
+  if (boss) {
+    mctx.fillStyle = "#ff1744";
+    mctx.fillRect(boss.x * sx - 4, boss.y * sy - 4, 8, 8);
+  }
+
+  mctx.fillStyle = "#00eaff";
+  mctx.beginPath();
+  mctx.arc(player.x * sx, player.y * sy, 4, 0, Math.PI * 2);
+  mctx.fill();
+}
+
+function gameLoop(timestamp) {
+  if (!running) return;
+
+  const dt = Math.min((timestamp - lastFrame) / 1000, 0.04);
+  lastFrame = timestamp;
+
+  update(dt);
+  if (!running) return;
+
+  draw();
+  requestAnimationFrame(gameLoop);
+}
+
+function gameOver() {
+  if (!running) return;
+
+  running = false;
+  saveData();
+
+  const oldBest = JSON.parse(localStorage.getItem("neonData") || "{}");
+  const best = oldBest[currentUser]?.score || score;
+
+  $("overlay").style.display = "flex";
+  $("overlay").innerHTML = `
+    <div class="panel">
+      <h1 style="color:#ff3155">GAME OVER</h1>
+      <p>Rezultat: ${score}</p>
+      <p>Novčići: ${money}</p>
+      <p>Vrijeme: ${Math.floor(elapsed)} sekundi</p>
+      <p>Najbolji rezultat: ${best}</p>
+      <button onclick="startGame()">IGRAJ PONOVNO</button>
+      <button onclick="showLeaderboard()">LEADERBOARD</button>
+      <button onclick="location.reload()">IZLAZ</button>
+    </div>
+  `;
+}
+
+function showLeaderboard() {
+  const data = JSON.parse(localStorage.getItem("neonData") || "{}");
+
+  const entries = Object.entries(data)
+    .sort((a, b) => (b[1].score || 0) - (a[1].score || 0))
+    .slice(0, 10);
+
+  let html = "<h1>LEADERBOARD</h1>";
+
+  if (entries.length === 0) {
+    html += "<p>Nema rezultata.</p>";
+  }
+
+  entries.forEach(([name, info], i) => {
+    html += `<p>${i + 1}. ${name} — ${info.score || 0}</p>`;
+  });
+
+  html += `<button onclick="location.reload()">POVRATAK</button>`;
+
+  $("overlay").innerHTML = `<div class="panel">${html}</div>`;
+}
+
+</script>
+</body>
+</html>
